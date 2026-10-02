@@ -27,7 +27,7 @@ Página HTML (clientes)
                       Code (JS) ──► Respond to Webhook (JSON)
 ```
 
-![Workflow no n8n](docs/workflow.png)
+![Workflow no n8n](workflow.png)
 
 ## Como funciona
 
