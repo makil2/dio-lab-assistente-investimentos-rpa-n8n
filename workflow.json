@@ -1,0 +1,262 @@
+{
+  "name": "Assistente de Investimentos - RPA + n8n",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "Clientes",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -864,
+        -16
+      ],
+      "id": "5a3ae52b-9021-4042-9932-d1494b692ec0",
+      "name": "Webhook",
+      "webhookId": "8e352638-0426-4598-8394-43a13da38245"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1520,
+        -16
+      ],
+      "id": "ddbc04e5-25a4-4bab-9dc7-8ae73d6cb368",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/makil2/dio-lab-assistente-investimentos-rpa-n8n/main/docs/data.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -576,
+        -16
+      ],
+      "id": "c391a042-9f01-494b-bfc1-07dd81285dbc",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pega o CSV como texto vindo HTTP Request\nconst csvRaw = $json.data ?? $json.body ?? $json;\nconst text = (typeof csvRaw === \"string\") ? csvRaw : JSON.stringify(csvRaw);\n\nconst lines = text.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);\nconst headers = lines[0].split(\",\").map(h => h.trim());\n\n// Linhas de dados\nconst investimentos = lines.slice(1).map(line => {\n  const cols = line.split(\",\").map(c => c.trim());\n  const obj = {};\n  headers.forEach((h, i) => obj[h] = cols[i] ?? \"\");\n\n  // normaliza mínimo para número\n  obj.minimo = Number(String(obj.minimo).replace(/[^\\d]/g, \"\")) || 0;\n\n  return obj;\n});\n\nreturn [{ json: { investimentos } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        -16
+      ],
+      "id": "9fb4f479-f915-4945-bec0-05a34c745bfa",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -64,
+        -288
+      ],
+      "id": "d457ebd7-1203-44b6-8d6a-610238492111",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// Node: Code in JavaScript1\n// Mode: \"Run Once for All Items\"\n// Entrada: item único vindo do Merge, com:\n//   json.clientes      -> array [{ nome, email, saldo, perfil }]\n//   json.investimentos -> array [{ perfil, produto, minimo, rentabilidade }]\n// ============================================================\n\nfunction pick(arr) {\n  return arr[Math.floor(Math.random() * arr.length)];\n}\n\n// Pega o item mesclado (Merge combina os 2 inputs em 1 item só)\nconst merged = $input.first().json;\n\n// Os dados do Webhook vêm dentro de \"body\" (headers, params, query, body)\nconst clientes = merged.clientes || (merged.body && merged.body.clientes) || [];\nconst investimentos = merged.investimentos || (merged.body && merged.body.investimentos) || [];\n\n// Monta um lookup rápido: perfil -> produto recomendado\n// (vem do CSV, não é mais fixo no código)\nconst tabelaRecomendacoes = {};\ninvestimentos.forEach((inv) => {\n  tabelaRecomendacoes[inv.perfil] = inv;\n});\n\nconst resultados = clientes.map((c) => {\n  // Converte \"R$ 12.500,00\" -> 12500 (número)\n  const saldoNum = Number(\n    String(c.saldo)\n      .replace('R$', '')\n      .replace(/\\./g, '')\n      .replace(',', '.')\n      .trim()\n  );\n\n  const perfil = c.perfil || 'Conservador';\n  const rec = tabelaRecomendacoes[perfil] || tabelaRecomendacoes['Conservador'];\n\n  // Verifica se o saldo atende ao mínimo do produto recomendado\n  const atendeMinimo = rec ? saldoNum >= Number(rec.minimo) : false;\n  const escolhido = atendeMinimo ? perfil : 'Conservador';\n  const recFinal = tabelaRecomendacoes[escolhido] || rec;\n  const motivo = atendeMinimo ? 'saldo_ok' : 'saldo_insuficiente';\n\n  const recomendacao = {\n    perfil: escolhido,\n    produto: recFinal ? recFinal.produto : null,\n    minimo: recFinal ? recFinal.minimo : null,\n    rentabilidade: recFinal ? recFinal.rentabilidade : null\n  };\n\n  const mensagens = [\n    `Olá ${c.nome}! Pelo seu perfil (${escolhido}), uma boa opção é **${recomendacao.produto}** (mínimo R$ ${recomendacao.minimo},00). Com seu saldo atual (${c.saldo}), você já consegue investir. Rentabilidade: ${recomendacao.rentabilidade}.`,\n    `Oi ${c.nome}! Recomendação para perfil ${escolhido}: **${recomendacao.produto}** (mínimo R$ ${recomendacao.minimo},00). Seu saldo (${c.saldo}) já atende o mínimo. Rentabilidade: ${recomendacao.rentabilidade}.`,\n    `${c.nome}, indo direto ao ponto: para o perfil ${escolhido}, **${recomendacao.produto}** (mínimo R$ ${recomendacao.minimo},00). Você tem ${c.saldo}, então dá pra aplicar. Rentabilidade: ${recomendacao.rentabilidade}.`\n  ];\n\n  return {\n    nome: c.nome,\n    email: c.email,\n    perfil,\n    saldo_texto: c.saldo,\n    saldo_num: saldoNum,\n    recomendacao,\n    motivo,\n    mensagens,\n    mensagem_escolhida: pick(mensagens)\n  };\n});\n\nreturn [{\n  json: {\n    ok: true,\n    total_clientes: resultados.length,\n    total_investimentos: investimentos.length,\n    resultados\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        -16
+      ],
+      "id": "145f968d-20e9-48db-85ff-21633b4b3875",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const resultados = $json.resultados || [];\n\nfunction parseBRL(valor) {\n  if (!valor) return 0; \n    const s = String(valor)\n      .replace(\"R$\", \"\")\n      .replace(/\\./g, \"\")\n      .replace(\",\", \".\")\n      .replace(/[^\\d.]/g, \"\")\n      .trim();\n    const n = Number(s);\n    return Number.isFinite(n) ? n : 0;\n}\n\n// retorna UM ITEM por cliente\nconst out = resultados.map(c => {\n  const saldoNum = c.saldo_num ?? parseBRL(c.saldo_texto ?? c.saldo);\n\n  return {\n    json: {\n      email_to: String(c.email || \"\").trim(),\n      nome: String(c.nome || \"\").trim(),\n      perfil: c.perfil,\n      saldo_texto: c.saldo_texto ?? c.saldo,\n      saldo_num: saldoNum,\n      recomendacao: c.recomendacao,\n      motivo: c.motivo,\n      mensagem_base: c.mensagem_escolhida || c.mensagem || \"\",\n      copy_rules: {\n        idioma: \"pt-BR\",\n        tom: \"amigável e profissional\",\n        tamanho: \"curto (4-6 linhas)\",\n        evitar: [\"promessas de ganho\", \"garantias\", \"linguagem agressiva\"]\n      }\n    }\n  };\n});\n\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        -16
+      ],
+      "id": "6765a7bc-8969-4c5d-a3da-d42f16cb46db",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.5-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Escreva um e-mail curto em pt-BR para o cliente abaixo, sem prometer ganhos e sem garantias.\n\nCliente:\n{{ $json.nome }}\n{{ $json.perfil }}\n{{ $json.saldo_texto }}\n\nRecomendação:\n{{ $json.recomendacao.produto }}\n{{ $json.recomendacao.minimo }}\n{{ $json.recomendacao.rentabilidade }}\n{{ $json.motivo }}\n\nRetorne APENAS JSON com:\n{\n   \"subject\": \"...\",\n   \"text_body\": \"...\",\n   \"html_body\": \"...\"  \n}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        688,
+        -208
+      ],
+      "id": "7e59d8c5-c985-47d4-8c8a-77b60f7f15d0",
+      "name": "Message a model1",
+      "retryOnFail": false,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "gZDHLeBJU9JJpRR2",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// Node: Code in JavaScript3\n// Mode: \"Run Once for All Items\"\n//\n// Entrada: saída do node \"Message a model\" (1 item por cliente).\n// O texto gerado pela IA é um JSON (string) com subject/text_body/html_body.\n// O caminho do texto varia conforme a versão do node do Gemini,\n// por isso vários caminhos são tentados.\n//\n// Também busca os dados originais do cliente (nome, perfil,\n// email_to, recomendacao, motivo) no node \"Code in JavaScript2\",\n// casando pelo mesmo índice (mesma ordem dos itens).\n// ============================================================\n\nconst items = $input.all();\nconst originais = $('Code in JavaScript2').all();\n\nreturn items.map((item, index) => {\n  const original = (originais[index] && originais[index].json) || {};\n  const j = item.json || {};\n\n  // Pega o texto bruto gerado pela IA (tenta os formatos conhecidos)\n  const raw =\n    j.content?.parts?.[0]?.text ||\n    j.candidates?.[0]?.content?.parts?.[0]?.text ||\n    j.output?.output?.[0]?.content?.[0]?.text ||\n    j.content?.[0]?.text ||\n    j.text ||\n    '';\n\n  // Remove blocos de markdown ```json ... ``` caso a IA os inclua\n  const limpo = raw.replace(/```json/g, '').replace(/```/g, '').trim();\n\n  let parsed = {};\n  try {\n    parsed = JSON.parse(limpo);\n  } catch (e) {\n    // Se não vier em JSON válido, usa o texto cru como corpo da mensagem\n    parsed = { subject: '', text_body: raw, html_body: '' };\n  }\n\n  const to = original.email_to || original.email || original.to || '';\n  const subject = parsed.subject || original.subject || '';\n  const text_body = parsed.text_body || '';\n  const html_body = parsed.html_body || '';\n\n  return {\n    json: {\n      ok: true,\n      to,\n      subject,\n      text_body,\n      html_body,\n\n      // (opcional) manter alguns campos úteis para debug/aula\n      meta: {\n        nome: original.nome,\n        perfil: original.perfil,\n        produto: original.recomendacao?.produto,\n        minimo: original.recomendacao?.minimo,\n        rentabilidade: original.recomendacao?.rentabilidade,\n        motivo: original.motivo\n      }\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        -16
+      ],
+      "id": "10a30023-7f11-4fa5-99cf-51c7015617a0",
+      "name": "Code in JavaScript3"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Message a model1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "id": "r7CyL6IuJ86qmHnj",
+  "tags": []
+}
